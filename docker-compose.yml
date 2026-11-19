@@ -1,0 +1,78 @@
+name: cohort-insights
+
+x-application: &application
+  build:
+    context: .
+    target: runtime
+  env_file:
+    - path: .env
+      required: true
+  environment:
+    MONGO_URL: ${DOCKER_MONGO_URL:?Set DOCKER_MONGO_URL in .env}
+    REDIS_URL: ${DOCKER_REDIS_URL:?Set DOCKER_REDIS_URL in .env}
+  depends_on:
+    mongodb:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *application
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 3
+
+  worker:
+    <<: *application
+    command: ["python", "-m", "backend.worker"]
+
+  mongodb:
+    image: mongo:7
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "always", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  tests:
+    build:
+      context: .
+      target: tests
+    profiles: ["test"]
+    environment:
+      TEST_MONGO_URL: ${DOCKER_MONGO_URL:?Set DOCKER_MONGO_URL in .env}
+      TEST_REDIS_URL: ${DOCKER_REDIS_URL:?Set DOCKER_REDIS_URL in .env}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  mongo-data:
+  redis-data:
